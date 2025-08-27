@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.spec
+
+# VS Code
+.vscode/
+
+# Logs
+logs/
+reports/
+*.log
+
+# Env
+.env
+myenv/
+templates/
