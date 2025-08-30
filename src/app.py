@@ -12,6 +12,8 @@ from core.parser import group_photos_flat
 from core.profiles import list_profiles, load_profile
 from core.xlsx_gen import create_wb_workbook, append_row
 from core.yadisk_client import upload_sku_photos
+from core.reports import generate_upload_report, export_csv_report
+from core.setup_wizard import show_setup_wizard
 
 
 class Worker(QtCore.QThread):
@@ -156,9 +158,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.profile = None
         self.profile_files = {}
         self.upload_results: Dict[str, List[str]] = {}
+        self.settings = QtCore.QSettings('WBAuto', 'WBAuto')
+        
         self._build_ui()
-        self._load_profiles()
         self._apply_styles()
+        
+        # Проверяем, нужно ли показать мастер настройки
+        self._check_first_run()
 
     def _build_ui(self):
         # Central splitter: left controls, center table, right preview
@@ -178,6 +184,15 @@ class MainWindow(QtWidgets.QMainWindow):
         f1.setFormAlignment(QtCore.Qt.AlignTop)
         f1.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
         self.profileCombo = QtWidgets.QComboBox()
+        self.refreshProfilesBtn = QtWidgets.QPushButton('R')
+        self.refreshProfilesBtn.setMaximumWidth(30)
+        self.refreshProfilesBtn.setToolTip('Обновить список профилей')
+        self.refreshProfilesBtn.clicked.connect(self._load_profiles)
+        
+        hProfiles = QtWidgets.QHBoxLayout()
+        hProfiles.addWidget(self.profileCombo)
+        hProfiles.addWidget(self.refreshProfilesBtn)
+        
         self.photosEdit = DropLineEdit()
         self.photosEdit.setPlaceholderText('Путь к папке с фото')
         btnChoose = QtWidgets.QPushButton('Обзор…')
@@ -187,7 +202,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hPhotos.addWidget(btnChoose)
         self.patternEdit = QtWidgets.QLineEdit(r"^(?P<sku>.+)\.(?P<n>\d+)\.(?P<ext>jpe?g|png)$")
         self.patternEdit.setClearButtonEnabled(True)
-        f1.addRow('Профиль:', self.profileCombo)
+        f1.addRow('Профиль:', hProfiles)
         f1.addRow('Фото:', hPhotos)
         f1.addRow('Паттерн:', self.patternEdit)
 
@@ -227,15 +242,27 @@ class MainWindow(QtWidgets.QMainWindow):
         warn.setStyleSheet('color:#caa; font-size:11px;')
         f2.addRow('', warn)
 
-        btns = QtWidgets.QHBoxLayout()
+        btns = QtWidgets.QGridLayout()
         self.scanBtn = QtWidgets.QPushButton('Сканировать')
+        self.importBtn = QtWidgets.QPushButton('Импорт данных')
         self.startBtn = QtWidgets.QPushButton('Загрузить в Яндекс.Диск')
         self.saveBtn = QtWidgets.QPushButton('Сформировать XLSX')
+        self.reportBtn = QtWidgets.QPushButton('Экспорт отчёта')
         self.openFolderBtn = QtWidgets.QPushButton('Открыть папку')
-        btns.addWidget(self.scanBtn)
-        btns.addWidget(self.startBtn)
-        btns.addWidget(self.saveBtn)
-        btns.addWidget(self.openFolderBtn)
+        
+        # Устанавливаем минимальную ширину для всех кнопок
+        button_min_width = 140
+        for btn in [self.scanBtn, self.importBtn, self.startBtn, self.saveBtn, self.reportBtn, self.openFolderBtn]:
+            btn.setMinimumWidth(button_min_width)
+            btn.setMinimumHeight(32)
+        
+        # Размещаем кнопки в сетке 2x3
+        btns.addWidget(self.scanBtn, 0, 0)
+        btns.addWidget(self.importBtn, 0, 1)
+        btns.addWidget(self.startBtn, 0, 2)
+        btns.addWidget(self.saveBtn, 1, 0)
+        btns.addWidget(self.reportBtn, 1, 1)
+        btns.addWidget(self.openFolderBtn, 1, 2)
 
         leftLayout.addWidget(grpProfile)
         leftLayout.addWidget(grpYD)
@@ -272,9 +299,49 @@ class MainWindow(QtWidgets.QMainWindow):
 
         splitter.addWidget(center)
 
-        # Right — preview thumbnails in a scroll area
+        # Right — SKU details form + preview thumbnails
         right = QtWidgets.QWidget()
         rightLayout = QtWidgets.QVBoxLayout(right)
+        right.setMinimumWidth(320)
+        
+        # SKU Edit Form
+        grpSku = QtWidgets.QGroupBox('Карточка SKU')
+        skuForm = QtWidgets.QFormLayout(grpSku)
+        skuForm.setFormAlignment(QtCore.Qt.AlignTop)
+        skuForm.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        
+        self.skuNameEdit = QtWidgets.QLineEdit()
+        self.skuNameEdit.setPlaceholderText('Наименование товара')
+        self.skuPriceEdit = QtWidgets.QLineEdit()
+        self.skuPriceEdit.setPlaceholderText('Цена (руб.)')
+        self.skuColorEdit = QtWidgets.QLineEdit()
+        self.skuColorEdit.setPlaceholderText('Цвет')
+        self.skuVolumeEdit = QtWidgets.QLineEdit()
+        self.skuVolumeEdit.setPlaceholderText('Объем (мл)')
+        self.skuMaterialEdit = QtWidgets.QLineEdit()
+        self.skuMaterialEdit.setPlaceholderText('Материал посуды')
+        self.skuGiftEdit = QtWidgets.QLineEdit()
+        self.skuGiftEdit.setPlaceholderText('Назначение подарка')
+        self.skuPatternEdit = QtWidgets.QLineEdit()
+        self.skuPatternEdit.setPlaceholderText('Рисунок')
+        self.skuComplectEdit = QtWidgets.QLineEdit()
+        self.skuComplectEdit.setPlaceholderText('Комплектация')
+        
+        skuForm.addRow('Название:', self.skuNameEdit)
+        skuForm.addRow('Цена:', self.skuPriceEdit)
+        skuForm.addRow('Цвет:', self.skuColorEdit)
+        skuForm.addRow('Объем (мл):', self.skuVolumeEdit)
+        skuForm.addRow('Материал:', self.skuMaterialEdit)
+        skuForm.addRow('Подарок для:', self.skuGiftEdit)
+        skuForm.addRow('Рисунок:', self.skuPatternEdit)
+        skuForm.addRow('Комплектация:', self.skuComplectEdit)
+        
+        self.currentSku = None
+        self.skuData = {}  # sku -> {name, price, color, volume, material, gift, pattern, complect}
+        
+        rightLayout.addWidget(grpSku)
+        
+        # Preview section
         lblPrev = QtWidgets.QLabel('Превью фото')
         lblPrev.setStyleSheet('color:#bbb; font-weight:600; padding:4px 6px;')
         rightLayout.addWidget(lblPrev)
@@ -323,11 +390,13 @@ class MainWindow(QtWidgets.QMainWindow):
         actStart = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_MediaPlay), 'Загрузить в Я.Диск', self)
         actSave = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_DialogSaveButton), 'Сформировать XLSX', self)
         actOpen = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_DirOpenIcon), 'Открыть папку', self)
+        actSetup = QtWidgets.QAction(style.standardIcon(QtWidgets.QStyle.SP_ComputerIcon), 'Мастер настройки', self)
         tb.addAction(actScan)
         tb.addAction(actStart)
         tb.addAction(actSave)
         tb.addSeparator()
         tb.addAction(actOpen)
+        tb.addAction(actSetup)
         actLog = QtWidgets.QAction('Лог', self)
         actLog.setCheckable(True)
         actLog.toggled.connect(self.logDock.setVisible)
@@ -336,8 +405,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Signals
         self.scanBtn.clicked.connect(self.scan)
+        self.importBtn.clicked.connect(self.import_data)
         self.startBtn.clicked.connect(self.start_upload)
         self.saveBtn.clicked.connect(self.save_xlsx)
+        self.reportBtn.clicked.connect(self.export_report)
         self.openFolderBtn.clicked.connect(self.open_current_folder)
         self.profileCombo.currentIndexChanged.connect(self.profile_changed)
         self.searchEdit.textChanged.connect(self.apply_filter)
@@ -346,21 +417,38 @@ class MainWindow(QtWidgets.QMainWindow):
         actStart.triggered.connect(self.start_upload)
         actSave.triggered.connect(self.save_xlsx)
         actOpen.triggered.connect(self.open_current_folder)
+        actSetup.triggered.connect(self.show_setup_wizard)
         # Context menu for table
         self.table.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.table_context_menu)
         btnEye.toggled.connect(self._toggle_token_visibility)
         btnClearToken.clicked.connect(lambda: self.tokenEdit.clear())
         btnCopyLog.clicked.connect(self._copy_log)
+        
+        # SKU form signals for auto-save
+        self.skuNameEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPriceEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuColorEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuVolumeEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuMaterialEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuGiftEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPatternEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuComplectEdit.textChanged.connect(self._save_current_sku_data)
 
+    def _load_settings(self):
+        """Загружает настройки приложения"""
         # Restore last settings
-        self.settings = QtCore.QSettings('wb_auto', 'kruzhki')
         last_folder = self.settings.value('photos_dir', '')
         self.photosEdit.setText(last_folder)
-        last_profile = self.settings.value('profile_name', '')
-        idx = self.profileCombo.findText(last_profile)
-        if idx >= 0:
-            self.profileCombo.setCurrentIndex(idx)
+        
+        # Загружаем токен Яндекс.Диска
+        token = self.settings.value('yandex_token', '')
+        self.tokenEdit.setText(token)
+        
+        # Загружаем корневую папку
+        root = self.settings.value('yandex_root', '/WB/Kruzhki')
+        self.rootEdit.setText(root)
+        
         # restore overwrite mode, concurrency, limit
         ow_idx = int(self.settings.value('overwrite_idx', 0) or 0)
         self.overwriteMode.setCurrentIndex(max(0, min(2, ow_idx)))
@@ -374,6 +462,89 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _copy_log(self):
         QtWidgets.QApplication.clipboard().setText(self.logEdit.toPlainText())
+
+    def _save_current_sku_data(self):
+        """Auto-save current SKU data when any field changes"""
+        if not self.currentSku:
+            return
+        
+        self.skuData[self.currentSku] = {
+            'name': self.skuNameEdit.text().strip(),
+            'price': self.skuPriceEdit.text().strip(),
+            'color': self.skuColorEdit.text().strip(),
+            'volume': self.skuVolumeEdit.text().strip(),
+            'material': self.skuMaterialEdit.text().strip(),
+            'gift': self.skuGiftEdit.text().strip(),
+            'pattern': self.skuPatternEdit.text().strip(),
+            'complect': self.skuComplectEdit.text().strip()
+        }
+
+    def _load_sku_data(self, sku: str):
+        """Load SKU data into the form"""
+        self.currentSku = sku
+        data = self.skuData.get(sku, {})
+        
+        # Temporarily disconnect signals to avoid recursive save
+        self.skuNameEdit.textChanged.disconnect()
+        self.skuPriceEdit.textChanged.disconnect()
+        self.skuColorEdit.textChanged.disconnect()
+        self.skuVolumeEdit.textChanged.disconnect()
+        self.skuMaterialEdit.textChanged.disconnect()
+        self.skuGiftEdit.textChanged.disconnect()
+        self.skuPatternEdit.textChanged.disconnect()
+        self.skuComplectEdit.textChanged.disconnect()
+        
+        self.skuNameEdit.setText(data.get('name', ''))
+        self.skuPriceEdit.setText(data.get('price', ''))
+        self.skuColorEdit.setText(data.get('color', ''))
+        self.skuVolumeEdit.setText(data.get('volume', ''))
+        self.skuMaterialEdit.setText(data.get('material', ''))
+        self.skuGiftEdit.setText(data.get('gift', ''))
+        self.skuPatternEdit.setText(data.get('pattern', ''))
+        self.skuComplectEdit.setText(data.get('complect', ''))
+        
+        # Reconnect signals
+        self.skuNameEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPriceEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuColorEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuVolumeEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuMaterialEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuGiftEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPatternEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuComplectEdit.textChanged.connect(self._save_current_sku_data)
+
+    def _clear_sku_form(self):
+        """Clear the SKU form"""
+        self.currentSku = None
+        
+        # Temporarily disconnect signals
+        self.skuNameEdit.textChanged.disconnect()
+        self.skuPriceEdit.textChanged.disconnect()
+        self.skuColorEdit.textChanged.disconnect()
+        self.skuVolumeEdit.textChanged.disconnect()
+        self.skuMaterialEdit.textChanged.disconnect()
+        self.skuGiftEdit.textChanged.disconnect()
+        self.skuPatternEdit.textChanged.disconnect()
+        self.skuComplectEdit.textChanged.disconnect()
+        
+        self.skuNameEdit.clear()
+        self.skuPriceEdit.clear()
+        self.skuColorEdit.clear()
+        self.skuVolumeEdit.clear()
+        self.skuMaterialEdit.clear()
+        self.skuGiftEdit.clear()
+        self.skuPatternEdit.clear()
+        self.skuComplectEdit.clear()
+        
+        # Reconnect signals
+        self.skuNameEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPriceEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuColorEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuVolumeEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuMaterialEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuGiftEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuPatternEdit.textChanged.connect(self._save_current_sku_data)
+        self.skuComplectEdit.textChanged.connect(self._save_current_sku_data)
 
     def _apply_styles(self):
         # Base style & font
@@ -401,9 +572,9 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel { color: #ddd; }
             QGroupBox { border: 1px solid #4a4a4a; border-radius: 8px; margin-top: 10px; }
             QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 2px 6px; color: #ddd; font-weight:600; }
-            QPushButton { background-color: #4a90e2; color: white; border: none; padding: 8px 14px; border-radius: 6px; }
+            QPushButton { background-color: #4a90e2; color: white; border: none; padding: 8px 12px; border-radius: 6px; font-weight: 500; min-width: 120px; }
             QPushButton:hover { background-color: #5aa0f2; }
-            QPushButton:disabled { background-color: #666; }
+            QPushButton:disabled { background-color: #666; color: #aaa; }
             QLineEdit { background: #232323; color: #eee; border: 1px solid #4a4a4a; padding: 6px 8px; border-radius: 6px; }
             QLineEdit:focus { border: 1px solid #5aa0f2; }
             QPlainTextEdit, QTextEdit { background: #1f1f1f; color: #eee; border: 1px solid #444; border-radius: 6px; }
@@ -443,9 +614,120 @@ class MainWindow(QtWidgets.QMainWindow):
             """
         )
 
+    def _check_first_run(self):
+        """Проверяет первый запуск и показывает мастер настройки при необходимости"""
+        # Загружаем профили для проверки
+        self._load_profiles()
+        
+        # Проверяем настройки первого запуска
+        first_run = self.settings.value('first_run', True, type=bool)
+        has_profiles = len(self.profile_files) > 0
+        has_token = bool(self.settings.value('yandex_token', ''))
+        
+        # Если первый запуск или нет профилей/токена, показываем мастер
+        if first_run or not has_profiles or not has_token:
+            self._show_setup_wizard()
+        else:
+            # Загружаем последний профиль
+            self._load_last_profile()
+    
+    def _show_setup_wizard(self):
+        """Показывает мастер настройки"""
+        
+        # Скрываем главное окно
+        self.hide()
+        
+        # Показываем мастер настройки
+        result = show_setup_wizard(self)
+        
+        if result:
+            # Сохраняем настройки из мастера
+            self._save_wizard_settings(result)
+            
+            # Перезагружаем профили
+            self._load_profiles()
+            
+            # Показываем главное окно
+            self.show()
+            
+            # Отмечаем, что первый запуск завершён
+            self.settings.setValue('first_run', False)
+        else:
+            # Пользователь отменил настройку - закрываем приложение
+            QtWidgets.QApplication.quit()
+    
+    def _save_wizard_settings(self, wizard_data):
+        """Сохраняет настройки из мастера"""
+        # Сохраняем токен Яндекс.Диска
+        if wizard_data.get('token'):
+            self.settings.setValue('yandex_token', wizard_data['token'])
+        
+        # Сохраняем корневую папку
+        if wizard_data.get('root'):
+            self.settings.setValue('yandex_root', wizard_data['root'])
+        
+        # Создаём профиль из данных мастера
+        self._create_profile_from_wizard(wizard_data)
+    
+    def _create_profile_from_wizard(self, wizard_data):
+        """Создаёт профиль из данных мастера"""
+        profiles_path = os.path.join(os.path.dirname(__file__), '..', 'profiles')
+        
+        # Создаём папку если не существует
+        os.makedirs(profiles_path, exist_ok=True)
+        
+        # Данные профиля
+        profile_name = wizard_data.get('profile_name', 'Мой профиль')
+        profile_data = {
+            "name": profile_name,
+            "brand": wizard_data.get('brand', 'Мой бренд'),
+            "title_template": f"{wizard_data.get('category', 'Товар')} {{sku}} {{volume}} мл",
+            "description_template": f"{wizard_data.get('material', 'Качественный')} {wizard_data.get('category', 'товар')} {{sku}}. Объем {{volume}} мл.",
+            "gender": "унисекс",
+            "composition": f"{wizard_data.get('material', 'материал')} 100%",
+            "color": "белый",
+            "vat": wizard_data.get('vat', '20%'),
+            "package_weight_g": wizard_data.get('weight', 350),
+            "dims": {"H_cm": 10, "L_cm": 12, "W_cm": 9},
+            "age18": "Нет",
+            "photo_sep": ";",
+            "max_photos": 6,
+            "wb_category": wizard_data.get('category', 'Товары'),
+            "seller_category": f"{wizard_data.get('category', 'Товары')}/Разное",
+            "calc_weight_kg_from_g": True,
+            "yadisk_root": wizard_data.get('root', '/WB/Товары'),
+            "defaults": {
+                "size": "универсальный",
+                "rus_size": "универсальный", 
+                "price": wizard_data.get('default_price', 499),
+                "volume": 330
+            }
+        }
+        
+        # Сохраняем профиль
+        import json
+        profile_name_safe = profile_name.lower().replace(' ', '_').replace('—', '_').replace('-', '_')
+        profile_file = os.path.join(profiles_path, f'{profile_name_safe}_profile.json')
+        
+        with open(profile_file, 'w', encoding='utf-8') as f:
+            json.dump(profile_data, f, ensure_ascii=False, indent=2)
+    
+    def _load_last_profile(self):
+        """Загружает последний использованный профиль"""
+        # Загружаем основные настройки
+        self._load_settings()
+        
+        # Загружаем последний профиль
+        last_profile = self.settings.value('profile_name', '')
+        if last_profile and last_profile in self.profile_files:
+            idx = self.profileCombo.findText(last_profile)
+            if idx >= 0:
+                self.profileCombo.setCurrentIndex(idx)
+
     def _load_profiles(self):
         profiles_path = os.path.join(os.path.dirname(__file__), '..', 'profiles')
         self.profile_files = list_profiles(profiles_path)
+        
         self.profileCombo.clear()
         for name in self.profile_files.keys():
             self.profileCombo.addItem(name)
@@ -459,6 +741,193 @@ class MainWindow(QtWidgets.QMainWindow):
             self.profile = load_profile(self.profile_files[name])
             root = self.profile.get('yadisk_root') or '/WB/Kruzhki'
             self.rootEdit.setText(root)
+
+    def import_data(self):
+        """Import SKU data from CSV/Excel file"""
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, 'Импорт данных SKU', '', 
+            'Excel и CSV файлы (*.xlsx *.xls *.csv);;Excel (*.xlsx *.xls);;CSV (*.csv)'
+        )
+        if not path:
+            return
+            
+        try:
+            import pandas as pd
+            
+            # Try to read the file
+            if path.lower().endswith('.csv'):
+                df = pd.read_csv(path, encoding='utf-8')
+            else:
+                df = pd.read_excel(path)
+            
+            # Expected columns: sku, name, price, barcode, color
+            # (case-insensitive matching)
+            columns = {col.lower(): col for col in df.columns}
+            
+            sku_col = None
+            for possible in ['sku', 'артикул', 'article', 'артикул продавца']:
+                if possible in columns:
+                    sku_col = columns[possible]
+                    break
+                    
+            if not sku_col:
+                QtWidgets.QMessageBox.warning(
+                    self, 'Ошибка импорта', 
+                    'Не найден столбец SKU/Артикул в файле'
+                )
+                return
+            
+            imported_count = 0
+            
+            for _, row in df.iterrows():
+                sku = str(row[sku_col]).strip()
+                if not sku or sku.lower() in ['nan', 'none']:
+                    continue
+                
+                data = {}
+                
+                # Import name
+                for possible in ['name', 'название', 'наименование', 'title']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['name'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import price
+                for possible in ['price', 'цена', 'cost']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        try:
+                            price_val = float(row[columns[possible]])
+                            data['price'] = str(int(price_val) if price_val.is_integer() else price_val)
+                        except (ValueError, TypeError):
+                            data['price'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import color
+                for possible in ['color', 'цвет', 'colour']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['color'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import volume
+                for possible in ['volume', 'объем', 'объём', 'мл']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['volume'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import material
+                for possible in ['material', 'материал', 'состав']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['material'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import gift purpose
+                for possible in ['gift', 'подарок', 'назначение', 'для кого']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['gift'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import pattern
+                for possible in ['pattern', 'рисунок', 'узор']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['pattern'] = str(row[columns[possible]]).strip()
+                        break
+                        
+                # Import complect
+                for possible in ['complect', 'комплектация', 'комплект']:
+                    if possible in columns and not pd.isna(row[columns[possible]]):
+                        data['complect'] = str(row[columns[possible]]).strip()
+                        break
+                
+                # Update SKU data
+                if sku not in self.skuData:
+                    self.skuData[sku] = {}
+                self.skuData[sku].update(data)
+                imported_count += 1
+            
+            # Update current form if the displayed SKU was imported
+            if self.currentSku and self.currentSku in self.skuData:
+                self._load_sku_data(self.currentSku)
+            
+            QtWidgets.QMessageBox.information(
+                self, 'Импорт завершен', 
+                f'Импортированы данные для {imported_count} SKU'
+            )
+            self.statusBar().showMessage(f'Импортированы данные для {imported_count} SKU', 5000)
+            
+        except ImportError:
+            QtWidgets.QMessageBox.critical(
+                self, 'Ошибка', 
+                'Для импорта требуется библиотека pandas.\nУстановите её: pip install pandas openpyxl'
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, 'Ошибка импорта', 
+                f'Не удалось импортировать данные:\n{str(e)}'
+            )
+
+    def show_setup_wizard(self):
+        """Запуск мастера настройки"""
+        result = show_setup_wizard(self)
+        
+        if result:
+            # Применяем настройки из мастера
+            self.tokenEdit.setText(result['token'])
+            self.rootEdit.setText(result['root'])
+            
+            # Можно создать профиль автоматически
+            QtWidgets.QMessageBox.information(
+                self, 'Настройка завершена',
+                'Настройки применены! Рекомендуем создать профиль с указанными параметрами.'
+            )
+
+    def export_report(self):
+        """Export detailed report about upload process"""
+        if not self.grouped:
+            QtWidgets.QMessageBox.warning(self, 'Ошибка', 'Нет данных для отчёта. Выполните сканирование.')
+            return
+        
+        # Choose export format
+        reply = QtWidgets.QMessageBox.question(
+            self, 'Формат отчёта', 
+            'Выберите формат отчёта:\n\nYes = Подробный отчёт (Excel)\nNo = Простой отчёт (CSV)',
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel
+        )
+        
+        if reply == QtWidgets.QMessageBox.Cancel:
+            return
+        
+        # Get export path
+        now = datetime.now().strftime('%Y%m%d-%H%M%S')
+        if reply == QtWidgets.QMessageBox.Yes:
+            default_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'reports', f'wb_report_{now}.xlsx'))
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, 'Сохранить отчёт', default_path, 'Excel файлы (*.xlsx)'
+            )
+            if not path:
+                return
+            
+            try:
+                warnings = getattr(self.grouped, 'warnings', [])
+                report_path = generate_upload_report(self.grouped, self.upload_results, warnings, path)
+                QtWidgets.QMessageBox.information(self, 'Отчёт создан', f'Подробный отчёт сохранён:\n{report_path}')
+                self.statusBar().showMessage(f'Отчёт сохранён: {os.path.basename(report_path)}', 5000)
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(self, 'Ошибка', f'Не удалось создать отчёт:\n{str(e)}')
+        
+        else:  # CSV
+            default_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'reports', f'wb_report_{now}.csv'))
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, 'Сохранить отчёт', default_path, 'CSV файлы (*.csv)'
+            )
+            if not path:
+                return
+            
+            try:
+                report_path = export_csv_report(self.grouped, self.upload_results, path)
+                QtWidgets.QMessageBox.information(self, 'Отчёт создан', f'CSV отчёт сохранён:\n{report_path}')
+                self.statusBar().showMessage(f'Отчёт сохранён: {os.path.basename(report_path)}', 5000)
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(self, 'Ошибка', f'Не удалось создать отчёт:\n{str(e)}')
 
     def choose_folder(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(self, 'Выбор папки с фото')
@@ -487,6 +956,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not folder or not os.path.isdir(folder):
             QtWidgets.QMessageBox.warning(self, 'Ошибка', 'Укажите корректную папку с фото')
             return
+        
+        # Clear previous SKU data when scanning new folder
+        self.skuData.clear()
+        self._clear_sku_form()
+        
         self.grouped = group_photos_flat(folder, pattern)
         self.populate_table(self.searchEdit.text().strip())
         if self.grouped.warnings:
@@ -501,9 +975,11 @@ class MainWindow(QtWidgets.QMainWindow):
         items = self.table.selectedItems()
         if not items:
             self.clear_preview()
+            self._clear_sku_form()
             return
         sku = self.table.item(items[0].row(), 0).text()
         self.update_preview_for_sku(sku)
+        self._load_sku_data(sku)
 
     def clear_preview(self):
         while self.previewFlow.count():
@@ -609,49 +1085,80 @@ class MainWindow(QtWidgets.QMainWindow):
                     max_photos = 6
             links = links[:max_photos]
 
-            title = sku
-            descr = ''
-            if self.profile:
+            # Get user-entered data for this SKU
+            sku_data = self.skuData.get(sku, {})
+            user_name = sku_data.get('name', '').strip()
+            user_price = sku_data.get('price', '').strip()
+            user_color = sku_data.get('color', '').strip()
+            user_volume = sku_data.get('volume', '').strip()
+            user_material = sku_data.get('material', '').strip()
+            user_gift = sku_data.get('gift', '').strip()
+            user_pattern = sku_data.get('pattern', '').strip()
+            user_complect = sku_data.get('complect', '').strip()
+
+            # Use user data if available, otherwise fall back to profile/template
+            title = user_name if user_name else sku
+            if not user_name and self.profile:
                 volume = (self.profile.get('defaults', {}) or {}).get('volume')
                 data = {'sku': sku, 'volume': volume or ''}
                 ttpl = self.profile.get('title_template')
-                dtpl = self.profile.get('description_template')
                 if ttpl:
                     try:
                         title = str(ttpl).format(**data)
                     except Exception:
                         title = str(ttpl)
+
+            descr = ''
+            if self.profile:
+                volume = (self.profile.get('defaults', {}) or {}).get('volume')
+                data = {'sku': sku, 'volume': volume or ''}
+                dtpl = self.profile.get('description_template')
                 if dtpl:
                     try:
                         descr = str(dtpl).format(**data)
                     except Exception:
                         descr = str(dtpl)
 
+            # Determine final values (user input or profile default)
+            final_color = user_color if user_color else (self.profile.get('color') if self.profile else '')
+            final_price = user_price if user_price else str((self.profile.get('defaults', {}).get('price') if self.profile else '') or '')
+            final_volume = user_volume if user_volume else str((self.profile.get('defaults', {}).get('volume') if self.profile else '') or '')
+            final_material = user_material if user_material else (self.profile.get('composition') if self.profile else '')
+            final_gift = user_gift if user_gift else ''
+            final_pattern = user_pattern if user_pattern else ''
+            final_complect = user_complect if user_complect else ''
+
+            # Build row according to new WB template
             row = {
-                'Артикул продавца': sku,
-                'Наименование': title,
-                'Бренд': (self.profile.get('brand') if self.profile else ''),
-                'Описание': descr,
-                'Фото': sep.join(links),
-                'Видео': '',
-                'КИЗ': '',
-                'Пол': (self.profile.get('gender') if self.profile else ''),
-                'Состав': (self.profile.get('composition') if self.profile else ''),
-                'Цвет': (self.profile.get('color') if self.profile else ''),
-                'Баркод': '',
-                'Размер': (self.profile.get('defaults', {}).get('size') if self.profile else ''),
-                'Рос. размер': (self.profile.get('defaults', {}).get('rus_size') if self.profile else ''),
-                'Цена': str((self.profile.get('defaults', {}).get('price') if self.profile else '') or ''),
-                'Ставка НДС': (self.profile.get('vat') if self.profile else ''),
-                'Вес с упаковкой (г)': str((self.profile.get('package_weight_g') if self.profile else '') or ''),
-                'Высота упаковки (см)': str((self.profile.get('dims', {}).get('H_cm') if self.profile else '') or ''),
-                'Длина упаковки (см)': str((self.profile.get('dims', {}).get('L_cm') if self.profile else '') or ''),
-                'Ширина упаковки (см)': str((self.profile.get('dims', {}).get('W_cm') if self.profile else '') or ''),
-                'Возрастные ограничения (18+)': (self.profile.get('age18') if self.profile else ''),
-                'Категория продавца': (self.profile.get('seller_category') if self.profile else ''),
+                'Группа': '',  # A - пустая, заполняется в WB
+                'Артикул продавца': sku,  # B
+                'Артикул WB': '',  # C - заполняется после создания
+                'Наименование': title,  # D
+                'Категория продавца': (self.profile.get('seller_category') if self.profile else 'Кружки'),  # E
+                'Бренд': (self.profile.get('brand') if self.profile else ''),  # F
+                'Описание': descr,  # G
+                'Фото': sep.join(links),  # H
+                'Вес с упаковкой (кг)': '',  # K - будет рассчитано из граммов
+                'Цвет': final_color,  # M
+                'Цена': final_price,  # O
+                'Ставка НДС': (self.profile.get('vat') if self.profile else '20%'),  # P
+                'Вес товара с упаковкой (г)': str((self.profile.get('package_weight_g') if self.profile else '') or ''),  # Q
+                'Высота предмета': str((self.profile.get('dims', {}).get('item_H_cm') if self.profile else '') or ''),  # R
+                'Высота упаковки': str((self.profile.get('dims', {}).get('H_cm') if self.profile else '') or ''),  # S
+                'Длина упаковки': str((self.profile.get('dims', {}).get('L_cm') if self.profile else '') or ''),  # T
+                'Ширина предмета': str((self.profile.get('dims', {}).get('item_W_cm') if self.profile else '') or ''),  # U
+                'Ширина упаковки': str((self.profile.get('dims', {}).get('W_cm') if self.profile else '') or ''),  # V
+                'Комплектация': final_complect,  # AD
+                'Материал посуды': final_material,  # AE
+                'Назначение подарка': final_gift,  # AG
+                'Объем (мл)': final_volume,  # AI
+                'Рисунок': final_pattern,  # AL
             }
+            
+            # Auto-calculate weight in kg from grams
             if self.profile and self.profile.get('calc_weight_kg_from_g') and self.profile.get('package_weight_g'):
                 row['Вес с упаковкой (кг)'] = str(round(self.profile.get('package_weight_g') / 1000, 3))
+            
             append_row(ws, row)
 
         # Ask for save path
@@ -704,6 +1211,79 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
+    
+    # Устанавливаем глобальную тёмную тему
+    app.setStyle('Fusion')
+    
+    # Глобальная палитра для тёмной темы
+    palette = QtGui.QPalette()
+    palette.setColor(QtGui.QPalette.Window, QtGui.QColor(43, 43, 43))
+    palette.setColor(QtGui.QPalette.WindowText, QtGui.QColor(240, 240, 240))
+    palette.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
+    palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(64, 64, 64))
+    palette.setColor(QtGui.QPalette.Text, QtGui.QColor(240, 240, 240))
+    palette.setColor(QtGui.QPalette.Button, QtGui.QColor(64, 64, 64))
+    palette.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(240, 240, 240))
+    palette.setColor(QtGui.QPalette.BrightText, QtGui.QColor(255, 255, 255))
+    palette.setColor(QtGui.QPalette.Link, QtGui.QColor(74, 144, 226))
+    palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(74, 144, 226))
+    palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(255, 255, 255))
+    app.setPalette(palette)
+    
+    # Глобальные стили для всех диалогов
+    app.setStyleSheet("""
+        /* Стили для всех диалогов */
+        QDialog {
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+        }
+        QDialog * {
+            color: #f0f0f0;
+        }
+        
+        /* Стили для сообщений об ошибках */
+        QMessageBox {
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+        }
+        QMessageBox * {
+            color: #f0f0f0 !important;
+            background-color: transparent !important;
+        }
+        QMessageBox QLabel {
+            color: #f0f0f0 !important;
+            background-color: transparent !important;
+        }
+        QMessageBox QPushButton {
+            background: #4a90e2;
+            color: white !important;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            min-width: 80px;
+        }
+        QMessageBox QPushButton:hover {
+            background: #5aa0f2;
+        }
+        
+        /* Стили для мастера настройки */
+        QWizard {
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+        }
+        QWizard * {
+            color: #f0f0f0 !important;
+        }
+        QWizard QLabel {
+            color: #f0f0f0 !important;
+            background-color: transparent !important;
+        }
+        QWizardPage {
+            background-color: #2b2b2b;
+            color: #f0f0f0;
+        }
+    """)
+    
     w = MainWindow()
     w.show()
     sys.exit(app.exec_())

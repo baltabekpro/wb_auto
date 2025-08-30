@@ -1,0 +1,25 @@
+{
+  "name": "Универсальный профиль",
+  "brand": "YourBrand",
+  "title_template": "Кружка {sku} {volume} мл",
+  "description_template": "Универсальная керамическая кружка {sku}. Объем {volume} мл. Подходит для всех.",
+  "gender": "унисекс",
+  "composition": "керамика 100%",
+  "color": "белый",
+  "vat": "20%",
+  "package_weight_g": 450,
+  "dims": { "H_cm": 10, "L_cm": 12, "W_cm": 9 },
+  "age18": "Нет",
+  "photo_sep": ";",
+  "max_photos": 6,
+  "wb_category": "Кружки",
+  "seller_category": "Кружки/Посуда",
+  "calc_weight_kg_from_g": true,
+  "yadisk_root": "/WB/Kruzhki",
+  "defaults": {
+    "size": "универсальный",
+    "rus_size": "универсальный",
+    "price": 399,
+    "volume": 330
+  }
+}

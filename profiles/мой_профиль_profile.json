@@ -1,0 +1,29 @@
+{
+  "name": "Мой профиль",
+  "brand": "Мой бренд",
+  "title_template": "Кружки {sku} {volume} мл",
+  "description_template": "Керамика Кружки {sku}. Объем {volume} мл.",
+  "gender": "унисекс",
+  "composition": "Керамика 100%",
+  "color": "белый",
+  "vat": "20%",
+  "package_weight_g": 350,
+  "dims": {
+    "H_cm": 10,
+    "L_cm": 12,
+    "W_cm": 9
+  },
+  "age18": "Нет",
+  "photo_sep": ";",
+  "max_photos": 6,
+  "wb_category": "Кружки",
+  "seller_category": "Кружки/Разное",
+  "calc_weight_kg_from_g": true,
+  "yadisk_root": "/WB/Kruzhki",
+  "defaults": {
+    "size": "универсальный",
+    "rus_size": "универсальный",
+    "price": 499,
+    "volume": 330
+  }
+}
