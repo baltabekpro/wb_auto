@@ -14,6 +14,7 @@ from core.xlsx_gen import create_wb_workbook, append_row
 from core.yadisk_client import upload_sku_photos
 from core.reports import generate_upload_report, export_csv_report
 from core.setup_wizard import show_setup_wizard
+from core.auto_updater import AutoUpdater
 
 
 class Worker(QtCore.QThread):
@@ -160,11 +161,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.upload_results: Dict[str, List[str]] = {}
         self.settings = QtCore.QSettings('WBAuto', 'WBAuto')
         
+        # Инициализация автообновления
+        self.auto_updater = AutoUpdater(self)
+        
         self._build_ui()
+        self._create_menu()  # Создаем меню
         self._apply_styles()
         
         # Проверяем, нужно ли показать мастер настройки
         self._check_first_run()
+        
+        # Принудительная загрузка профилей на всякий случай
+        if not self.profile_files:
+            self._load_profiles()
 
     def _build_ui(self):
         # Central splitter: left controls, center table, right preview
@@ -435,6 +444,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.skuPatternEdit.textChanged.connect(self._save_current_sku_data)
         self.skuComplectEdit.textChanged.connect(self._save_current_sku_data)
 
+    def _create_menu(self):
+        """Создает главное меню приложения"""
+        menubar = self.menuBar()
+        
+        # Меню "Файл"
+        file_menu = menubar.addMenu('Файл')
+        
+        # Действие "Выход"
+        exit_action = QtWidgets.QAction('Выход', self)
+        exit_action.setShortcut('Ctrl+Q')
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # Меню "Инструменты"
+        tools_menu = menubar.addMenu('Инструменты')
+        
+        # Действие "Мастер настройки"
+        setup_action = QtWidgets.QAction('Мастер настройки', self)
+        setup_action.triggered.connect(self.show_setup_wizard)
+        tools_menu.addAction(setup_action)
+        
+        tools_menu.addSeparator()
+        
+        # Действие "Настройки"
+        settings_action = QtWidgets.QAction('Настройки', self)
+        settings_action.triggered.connect(self.show_settings)
+        tools_menu.addAction(settings_action)
+        
+        # Меню "Справка"
+        help_menu = menubar.addMenu('Справка')
+        
+        # Действие "Проверить обновления"
+        update_action = QtWidgets.QAction('Проверить обновления', self)
+        update_action.triggered.connect(self.check_for_updates)
+        help_menu.addAction(update_action)
+        
+        help_menu.addSeparator()
+        
+        # Действие "О программе"
+        about_action = QtWidgets.QAction('О программе', self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
     def _load_settings(self):
         """Загружает настройки приложения"""
         # Restore last settings
@@ -630,6 +682,8 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             # Загружаем последний профиль
             self._load_last_profile()
+            # Показываем главное окно
+            self.show()
     
     def _show_setup_wizard(self):
         """Показывает мастер настройки"""
@@ -678,11 +732,18 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Данные профиля
         profile_name = wizard_data.get('profile_name', 'Мой профиль')
+        
+        # Используем описание из мастера, если есть, иначе генерируем автоматически
+        if wizard_data.get('description'):
+            description_template = wizard_data['description']
+        else:
+            description_template = f"{wizard_data.get('material', 'Качественный')} {wizard_data.get('category', 'товар')} {{sku}}. Объем {{volume}} мл."
+        
         profile_data = {
             "name": profile_name,
             "brand": wizard_data.get('brand', 'Мой бренд'),
             "title_template": f"{wizard_data.get('category', 'Товар')} {{sku}} {{volume}} мл",
-            "description_template": f"{wizard_data.get('material', 'Качественный')} {wizard_data.get('category', 'товар')} {{sku}}. Объем {{volume}} мл.",
+            "description_template": description_template,
             "gender": "унисекс",
             "composition": f"{wizard_data.get('material', 'материал')} 100%",
             "color": "белый",
@@ -725,8 +786,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.profileCombo.setCurrentIndex(idx)
 
     def _load_profiles(self):
-        profiles_path = os.path.join(os.path.dirname(__file__), '..', 'profiles')
-        self.profile_files = list_profiles(profiles_path)
+        """Загружает профили (автоматически определяет путь для exe и dev режима)"""
+        print("🔄 Загрузка профилей...")
+        self.profile_files = list_profiles()  # Без параметра - автоматический поиск
         
         self.profileCombo.clear()
         for name in self.profile_files.keys():
@@ -734,6 +796,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.profileCombo.count() > 0:
             self.profileCombo.setCurrentIndex(0)
             self.profile_changed(0)
+        else:
+            print("⚠️ Профили не загружены! Проверьте папку profiles")
 
     def profile_changed(self, idx):
         name = self.profileCombo.currentText()
@@ -1207,6 +1271,62 @@ class MainWindow(QtWidgets.QMainWindow):
         folder = os.path.dirname(files[0].path)
         if folder and os.path.isdir(folder):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(folder))
+
+    def check_for_updates(self):
+        """Проверяет обновления вручную"""
+        self.auto_updater.check_and_notify(silent=False)
+    
+    def show_settings(self):
+        """Показывает окно настроек"""
+        QtWidgets.QMessageBox.information(
+            self,
+            "Настройки",
+            "Окно настроек будет добавлено в следующей версии.\n\n"
+            "Пока что настройки можно изменить через Мастер настройки."
+        )
+    
+    def show_about(self):
+        """Показывает информацию о программе"""
+        try:
+            version_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "version.txt")
+            if os.path.exists(version_file):
+                with open(version_file, 'r', encoding='utf-8') as f:
+                    version = f.read().strip()
+            else:
+                version = "1.0.0"
+        except Exception:
+            version = "1.0.0"
+        
+        QtWidgets.QMessageBox.about(
+            self,
+            "О программе WB Auto",
+            f"""
+<h3>WB Auto v{version}</h3>
+<p>Автоматизация загрузки товаров на Wildberries</p>
+
+<p><b>Возможности:</b></p>
+<ul>
+<li>Автоматическое распознавание фотографий товаров</li>
+<li>Загрузка фото в Яндекс.Диск</li>
+<li>Генерация Excel файлов для WB</li>
+<li>Автоматическое обновление</li>
+</ul>
+
+<p><b>Разработчик:</b> baltabekpro</p>
+<p><b>Репозиторий:</b> <a href="https://github.com/baltabekpro/wb_auto">GitHub</a></p>
+
+<p><i>© 2025 WB Auto. Все права защищены.</i></p>
+            """.strip()
+        )
+    
+    def showEvent(self, event):
+        """Переопределяем событие показа окна для проверки обновлений при запуске"""
+        super().showEvent(event)
+        
+        # Проверяем обновления при первом показе окна (автоматически, без уведомления если нет обновлений)
+        if not hasattr(self, '_updates_checked'):
+            self._updates_checked = True
+            QtCore.QTimer.singleShot(2000, lambda: self.auto_updater.check_and_notify(silent=True))
 
 
 def main():

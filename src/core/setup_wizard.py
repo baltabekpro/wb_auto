@@ -484,6 +484,16 @@ class ProfilePage(QtWidgets.QWizardPage):
             'Можно будет изменить для каждого SKU отдельно'
         )
         
+        # Добавляем поле описания
+        self.descriptionEdit = QtWidgets.QTextEdit()
+        self.descriptionEdit.setPlaceholderText('Описание товара...')
+        self.descriptionEdit.setMaximumHeight(80)  # Ограничиваем высоту
+        self.descriptionEdit.setToolTip(
+            'Описание товара для карточки на Wildberries\n'
+            'Можно использовать переменные: {sku}, {volume}\n'
+            'Например: "Керамическая кружка {sku}. Объем {volume} мл."'
+        )
+        
         # Добавляем стили для лучшей видимости
         for widget in [self.profileNameEdit, self.brandEdit, self.categoryEdit, self.vatEdit, self.materialEdit]:
             widget.setStyleSheet("""
@@ -498,6 +508,21 @@ class ProfilePage(QtWidgets.QWizardPage):
                     border-color: #0078d4;
                 }
             """)
+        
+        # Стили для текстового поля описания
+        self.descriptionEdit.setStyleSheet("""
+            QTextEdit {
+                color: #f0f0f0;
+                background: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                font-family: system-ui;
+            }
+            QTextEdit:focus {
+                border-color: #0078d4;
+            }
+        """)
         
         self.weightEdit.setStyleSheet("""
             QSpinBox {
@@ -531,6 +556,7 @@ class ProfilePage(QtWidgets.QWizardPage):
         layout.addRow('Категория:', self.categoryEdit)
         layout.addRow('НДС:', self.vatEdit)
         layout.addRow('Материал:', self.materialEdit)
+        layout.addRow('Описание товара:', self.descriptionEdit)
         layout.addRow('Вес упаковки:', self.weightEdit)
         layout.addRow('Цена по умолчанию:', self.defaultPriceEdit)
         
@@ -555,6 +581,7 @@ class ProfilePage(QtWidgets.QWizardPage):
         self.registerField('category', self.categoryEdit)
         self.registerField('vat', self.vatEdit)
         self.registerField('material', self.materialEdit)
+        self.registerField('description', self.descriptionEdit)
         self.registerField('weight', self.weightEdit)
         self.registerField('default_price', self.defaultPriceEdit)
 
@@ -650,6 +677,7 @@ def show_setup_wizard(parent=None):
             'category': wizard.field('category'),
             'vat': wizard.field('vat'),
             'material': wizard.field('material'),
+            'description': wizard.field('description'),
             'weight': wizard.field('weight'),
             'default_price': wizard.field('default_price'),
         }
