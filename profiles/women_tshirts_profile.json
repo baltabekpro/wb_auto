@@ -1,0 +1,16 @@
+{
+    "name": "Для женщин — футболки",
+    "brand": "StyleBrand",
+    "seller_category": "Футболки",
+    "material": "Хлопок",
+    "gift_purpose": "Для женщин",
+    "pattern": "Авторский",
+    "size": "M",
+    "color": "Розовый",
+    "sleeve_type": "Короткий рукав",
+    "neck_type": "Круглый вырез",
+    "fit_type": "Приталенная",
+    "description_template": "Женская футболка {sku} из мягкого хлопка. Модная расцветка, удобная посадка. Отличный выбор для активных девушек.",
+    "created_date": "2025-09-04",
+    "category": "tshirts"
+}

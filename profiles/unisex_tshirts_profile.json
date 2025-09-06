@@ -1,0 +1,16 @@
+{
+    "name": "Унисекс — футболки",
+    "brand": "StyleBrand", 
+    "seller_category": "Футболки",
+    "material": "Хлопок",
+    "gift_purpose": "Универсальный",
+    "pattern": "Без рисунка",
+    "size": "L",
+    "color": "Черный",
+    "sleeve_type": "Короткий рукав",
+    "neck_type": "Круглый вырез",
+    "fit_type": "Свободная посадка",
+    "description_template": "Универсальная футболка {sku} для всех. Качественный хлопок, классический крой. Подходит для повседневной носки.",
+    "created_date": "2025-09-04",
+    "category": "tshirts"
+}

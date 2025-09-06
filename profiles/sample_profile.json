@@ -13,6 +13,7 @@
   "photo_sep": ";",
   "max_photos": 6,
   "wb_category": "Кружки",
+  "category": "kruzhki",
   "seller_category": "Кружки/Посуда",
   "calc_weight_kg_from_g": true,
   "yadisk_root": "/WB/Kruzhki",

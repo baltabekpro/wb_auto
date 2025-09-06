@@ -33,7 +33,7 @@ def load_profile(path: str) -> Profile:
     return Profile(data=data)
 
 
-def list_profiles(folder: str = None) -> Dict[str, str]:
+def list_profiles(folder: str = None, category: str = None) -> Dict[str, str]:
     """Загружает список профилей. Автоматически определяет папку профилей."""
     result: Dict[str, str] = {}
     
@@ -42,6 +42,8 @@ def list_profiles(folder: str = None) -> Dict[str, str]:
         folder = get_resource_path("profiles")
     
     print(f"🔍 Ищем профили в: {folder}")
+    if category:
+        print(f"📂 Фильтр по категории: {category}")
     
     if not os.path.isdir(folder):
         print(f"❌ Папка профилей не найдена: {folder}")
@@ -57,6 +59,14 @@ def list_profiles(folder: str = None) -> Dict[str, str]:
         print(f"📄 Обрабатываем файл: {fn}")
         try:
             prof = load_profile(full)
+            
+            # Фильтрация по категории
+            if category:
+                prof_category = prof.get('category', 'kruzhki')  # По умолчанию кружки
+                if prof_category != category:
+                    print(f"⏭️ Профиль {prof.name} пропущен (категория: {prof_category})")
+                    continue
+            
             result[prof.name] = full
             print(f"✅ Загружен профиль: {prof.name}")
         except Exception as e:

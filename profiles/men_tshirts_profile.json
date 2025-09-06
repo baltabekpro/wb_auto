@@ -1,0 +1,16 @@
+{
+    "name": "Для мужчин — футболки",
+    "brand": "StyleBrand",
+    "seller_category": "Футболки",
+    "material": "Хлопок",
+    "gift_purpose": "Для мужчин",
+    "pattern": "Авторский",
+    "size": "L",
+    "color": "Белый",
+    "sleeve_type": "Короткий рукав",
+    "neck_type": "Круглый вырез",
+    "fit_type": "Обычная посадка",
+    "description_template": "Стильная футболка {sku} из качественного хлопка. Комфортная посадка, яркий дизайн. Идеальный подарок для мужчин.",
+    "created_date": "2025-09-04",
+    "category": "tshirts"
+}

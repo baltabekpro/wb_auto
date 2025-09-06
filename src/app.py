@@ -17,6 +17,22 @@ from core.setup_wizard import show_setup_wizard
 from core.auto_updater import AutoUpdater
 
 
+def get_resource_path(relative_path):
+    """Получает абсолютный путь к ресурсу для PyInstaller"""
+    try:
+        # PyInstaller создает временную папку и сохраняет путь в _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # В режиме разработки используем обычный путь
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    return os.path.join(base_path, relative_path)
+
+
+# Импорт UI компонентов
+# Splash screen теперь в main.py
+
+
 class Worker(QtCore.QThread):
     progress = QtCore.pyqtSignal(int, int)  # done, total
     message = QtCore.pyqtSignal(str)
@@ -153,13 +169,23 @@ class DropLineEdit(QtWidgets.QLineEdit):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('WB Кружки — автозагрузка')
-        self.resize(1280, 800)
+        
+        # Инициализируем настройки в самом начале
+        self.settings = QtCore.QSettings('WBAuto', 'WBAuto')
+        
+        self.setWindowTitle('WB Auto — автозагрузка')
+        
+        # Устанавливаем иконку
+        self._set_window_icon()
+        
+        # Восстанавливаем размеры и позицию окна
+        self._restore_window_geometry()
+        
         self.grouped = None
         self.profile = None
         self.profile_files = {}
         self.upload_results: Dict[str, List[str]] = {}
-        self.settings = QtCore.QSettings('WBAuto', 'WBAuto')
+        self.current_category = self.settings.value('last_category', 'kruzhki')  # Восстанавливаем последнюю категорию
         
         # Инициализация автообновления
         self.auto_updater = AutoUpdater(self)
@@ -175,6 +201,54 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.profile_files:
             self._load_profiles()
 
+    def _set_window_icon(self):
+        """Устанавливает иконку окна"""
+        try:
+            icon_path = get_resource_path('icons/app_icon.ico')
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QtGui.QIcon(icon_path))
+        except Exception as e:
+            print(f"Не удалось загрузить иконку: {e}")
+    
+    def _restore_window_geometry(self):
+        """Восстанавливает размеры и позицию окна"""
+        try:
+            # Восстанавливаем геометрию окна
+            geometry = self.settings.value('geometry')
+            if geometry:
+                self.restoreGeometry(geometry)
+            else:
+                # Устанавливаем размеры по умолчанию
+                self.resize(1280, 800)
+                # Центрируем окно
+                self._center_window()
+                
+            # Восстанавливаем состояние окна (максимизировано/обычное)
+            state = self.settings.value('windowState')
+            if state:
+                self.restoreState(state)
+        except Exception as e:
+            print(f"Ошибка восстановления окна: {e}")
+            self.resize(1280, 800)
+            self._center_window()
+    
+    def _center_window(self):
+        """Центрирует окно на экране"""
+        screen = QtWidgets.QApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        window_geometry = self.frameGeometry()
+        center_point = screen_geometry.center()
+        window_geometry.moveCenter(center_point)
+        self.move(window_geometry.topLeft())
+
+    def _save_window_geometry(self):
+        """Сохраняет размеры и позицию окна"""
+        try:
+            self.settings.setValue('geometry', self.saveGeometry())
+            self.settings.setValue('windowState', self.saveState())
+        except Exception as e:
+            print(f"Ошибка сохранения окна: {e}")
+
     def _build_ui(self):
         # Central splitter: left controls, center table, right preview
         splitter = QtWidgets.QSplitter()
@@ -188,10 +262,17 @@ class MainWindow(QtWidgets.QMainWindow):
         leftLayout.setSpacing(12)
         left.setMinimumWidth(420)
 
-        grpProfile = QtWidgets.QGroupBox('Профиль и источник')
+        grpProfile = QtWidgets.QGroupBox('Категория и профиль')
         f1 = QtWidgets.QFormLayout(grpProfile)
         f1.setFormAlignment(QtCore.Qt.AlignTop)
         f1.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        
+        # Переключатель категорий
+        self.categoryCombo = QtWidgets.QComboBox()
+        self.categoryCombo.addItem('🍺 Кружки', 'kruzhki')
+        self.categoryCombo.addItem('👕 Футболки', 'tshirts')
+        self.categoryCombo.currentIndexChanged.connect(self._category_changed)
+        
         self.profileCombo = QtWidgets.QComboBox()
         self.refreshProfilesBtn = QtWidgets.QPushButton('R')
         self.refreshProfilesBtn.setMaximumWidth(30)
@@ -211,6 +292,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hPhotos.addWidget(btnChoose)
         self.patternEdit = QtWidgets.QLineEdit(r"^(?P<sku>.+)\.(?P<n>\d+)\.(?P<ext>jpe?g|png)$")
         self.patternEdit.setClearButtonEnabled(True)
+        f1.addRow('Категория:', self.categoryCombo)
         f1.addRow('Профиль:', hProfiles)
         f1.addRow('Фото:', hPhotos)
         f1.addRow('Паттерн:', self.patternEdit)
@@ -369,6 +451,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Bottom collapsible log panel
         self.logDock = QtWidgets.QDockWidget('Лог', self)
+        self.logDock.setObjectName('logDock')  # Устанавливаем objectName
         self.logDock.setAllowedAreas(QtCore.Qt.BottomDockWidgetArea)
         logW = QtWidgets.QWidget()
         logL = QtWidgets.QVBoxLayout(logW)
@@ -392,6 +475,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Toolbar
         tb = self.addToolBar('Действия')
+        tb.setObjectName('mainToolBar')  # Устанавливаем objectName
         tb.setIconSize(QtCore.QSize(22, 22))
         tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         style = self.style()
@@ -493,12 +577,21 @@ class MainWindow(QtWidgets.QMainWindow):
         last_folder = self.settings.value('photos_dir', '')
         self.photosEdit.setText(last_folder)
         
+        # Загружаем последнюю выбранную категорию
+        last_category = self.settings.value('last_category', 'kruzhki')
+        self.current_category = last_category
+        
+        # Устанавливаем категорию в комбобоксе
+        category_index = 0 if last_category == 'kruzhki' else 1
+        self.categoryCombo.setCurrentIndex(category_index)
+        
         # Загружаем токен Яндекс.Диска
         token = self.settings.value('yandex_token', '')
         self.tokenEdit.setText(token)
         
-        # Загружаем корневую папку
-        root = self.settings.value('yandex_root', '/WB/Kruzhki')
+        # Загружаем корневую папку (обновляем для категории)
+        default_root = '/WB/Kruzhki' if last_category == 'kruzhki' else '/WB/Tshirts'
+        root = self.settings.value('yandex_root', default_root)
         self.rootEdit.setText(root)
         
         # restore overwrite mode, concurrency, limit
@@ -508,6 +601,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.concSlider.setValue(max(1, min(6, conc)))
         limit = int(self.settings.value('limit', 0) or 0)
         self.limitSpin.setValue(max(0, limit))
+        
+        # Обновляем заголовок окна для выбранной категории
+        category_name = "Кружки" if last_category == "kruzhki" else "Футболки"
+        self.setWindowTitle(f"WB Auto - {category_name}")
 
     def _toggle_token_visibility(self, checked: bool):
         self.tokenEdit.setEchoMode(QtWidgets.QLineEdit.Normal if checked else QtWidgets.QLineEdit.Password)
@@ -786,9 +883,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.profileCombo.setCurrentIndex(idx)
 
     def _load_profiles(self):
-        """Загружает профили (автоматически определяет путь для exe и dev режима)"""
-        print("🔄 Загрузка профилей...")
-        self.profile_files = list_profiles()  # Без параметра - автоматический поиск
+        """Загружает профили для текущей категории"""
+        print(f"🔄 Загрузка профилей для категории: {self.current_category}")
+        self.profile_files = list_profiles(category=self.current_category)
         
         self.profileCombo.clear()
         for name in self.profile_files.keys():
@@ -798,6 +895,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self.profile_changed(0)
         else:
             print("⚠️ Профили не загружены! Проверьте папку profiles")
+
+    def _category_changed(self):
+        """Обработчик изменения категории"""
+        self.current_category = self.categoryCombo.currentData()
+        print(f"📁 Категория изменена на: {self.current_category}")
+        
+        # Сохраняем выбранную категорию в настройки
+        self.settings.setValue("last_category", self.current_category)
+        
+        # Обновляем корневую папку для новой категории
+        new_root = '/WB/Kruzhki' if self.current_category == 'kruzhki' else '/WB/Tshirts'
+        self.rootEdit.setText(new_root)
+        self.settings.setValue('yandex_root', new_root)
+        
+        # Перезагружаем профили для новой категории
+        self._load_profiles()
+        
+        # Обновляем заголовок окна
+        category_name = "Кружки" if self.current_category == "kruzhki" else "Футболки"
+        self.setWindowTitle(f"WB Auto - {category_name}")
 
     def profile_changed(self, idx):
         name = self.profileCombo.currentText()
@@ -1328,86 +1445,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._updates_checked = True
             QtCore.QTimer.singleShot(2000, lambda: self.auto_updater.check_and_notify(silent=True))
 
-
-def main():
-    app = QtWidgets.QApplication(sys.argv)
-    
-    # Устанавливаем глобальную тёмную тему
-    app.setStyle('Fusion')
-    
-    # Глобальная палитра для тёмной темы
-    palette = QtGui.QPalette()
-    palette.setColor(QtGui.QPalette.Window, QtGui.QColor(43, 43, 43))
-    palette.setColor(QtGui.QPalette.WindowText, QtGui.QColor(240, 240, 240))
-    palette.setColor(QtGui.QPalette.Base, QtGui.QColor(35, 35, 35))
-    palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(64, 64, 64))
-    palette.setColor(QtGui.QPalette.Text, QtGui.QColor(240, 240, 240))
-    palette.setColor(QtGui.QPalette.Button, QtGui.QColor(64, 64, 64))
-    palette.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(240, 240, 240))
-    palette.setColor(QtGui.QPalette.BrightText, QtGui.QColor(255, 255, 255))
-    palette.setColor(QtGui.QPalette.Link, QtGui.QColor(74, 144, 226))
-    palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(74, 144, 226))
-    palette.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(255, 255, 255))
-    app.setPalette(palette)
-    
-    # Глобальные стили для всех диалогов
-    app.setStyleSheet("""
-        /* Стили для всех диалогов */
-        QDialog {
-            background-color: #2b2b2b;
-            color: #f0f0f0;
-        }
-        QDialog * {
-            color: #f0f0f0;
-        }
-        
-        /* Стили для сообщений об ошибках */
-        QMessageBox {
-            background-color: #2b2b2b;
-            color: #f0f0f0;
-        }
-        QMessageBox * {
-            color: #f0f0f0 !important;
-            background-color: transparent !important;
-        }
-        QMessageBox QLabel {
-            color: #f0f0f0 !important;
-            background-color: transparent !important;
-        }
-        QMessageBox QPushButton {
-            background: #4a90e2;
-            color: white !important;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            min-width: 80px;
-        }
-        QMessageBox QPushButton:hover {
-            background: #5aa0f2;
-        }
-        
-        /* Стили для мастера настройки */
-        QWizard {
-            background-color: #2b2b2b;
-            color: #f0f0f0;
-        }
-        QWizard * {
-            color: #f0f0f0 !important;
-        }
-        QWizard QLabel {
-            color: #f0f0f0 !important;
-            background-color: transparent !important;
-        }
-        QWizardPage {
-            background-color: #2b2b2b;
-            color: #f0f0f0;
-        }
-    """)
-    
-    w = MainWindow()
-    w.show()
-    sys.exit(app.exec_())
-
-
-if __name__ == '__main__':
-    main()
+    def closeEvent(self, event):
+        """Обработчик закрытия окна"""
+        self._save_window_geometry()
+        event.accept()
